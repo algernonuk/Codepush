@@ -1,0 +1,517 @@
+﻿Imports LocationChooser
+Imports PetesControls
+Imports System.Environment
+Imports System.Timers
+Imports System.Diagnostics.Contracts
+Imports System.IO
+
+Public Enum state
+    NotChecked = 0
+    NotConnected = 1
+    Connected = 2
+End Enum
+
+Public Class LoginScreen
+    Private Const port As Integer = 27429
+    Dim WithEvents lc As New LocationChooser.LocationChooser
+    Dim waiting As Boolean = True
+    Dim timedOut As Boolean = False
+    Dim communication As String = ""
+    Dim userName As String
+    Dim sid As String
+    Dim networkStatus As state = state.NotChecked
+    Dim deviceState As state = state.NotChecked
+    Dim debug As Boolean = False
+    Dim loginFlag As Boolean = False
+    Dim domainAdmins As String
+    Dim origPos As Integer = 0
+    Dim backdoor As String = ""
+    Dim backdoorBall As Boolean = False
+    Dim connected As Boolean = False
+
+    ''' <summary>
+    ''' Main entry point.
+    ''' </summary>
+    ''' <remarks></remarks>
+    Private Sub LoginScreen_Load(sender As System.Object, e As System.EventArgs) Handles MyBase.Load
+        If My.User.Name.Contains("\") Then
+            userName = My.User.Name.Split("\")(1).ToLower
+        Else
+            userName = My.User.Name.ToLower
+        End If
+        sid = Utils.GetUserSid(userName)
+
+
+        Login.Enabled = True
+
+        Me.Text = My.Computer.Name & " Ashby School Login Process for " & userName
+        displayMOTD()
+        Me.Visible = True
+        writeStatus("Connecting to service")
+        Try
+            ClientSocket1.Connect("127.0.0.1", port)
+            connected = True
+        Catch ex As Exception
+            AUPBox.Text = "Middleman Communications Failure. "
+            AUPBox.AppendText(vbCrLf & "If this error recurrs after a reboot please report this error to Network Services" & vbCrLf)
+            Utils.WriteToEventLog("Middleman Communications Failure on port " & port, EventLogEntryType.Error)
+            Me.Login.Visible = False
+            Me.Logout.Text = "Reboot"
+            connected = False
+            'uninstall()
+        End Try
+        If connected Then
+            writeStatus("Connected to service")
+            sendSync("RELOAD")
+
+            sendSync("RR|HKCU#" & sid & "\Control Panel\desktop#Wallpaper|REG_SZ^")
+            If Not File.Exists(communication) Then
+                communication = "c:\windows\desktopwallpaper\login.jpg"
+            End If
+            writeStatus("Wallpaper = " & communication)
+            Utils.setWallpaper(communication)
+            sendSync("GETDEBUG^")
+            If communication.ToLower.Equals("true") Then
+                debug = True
+            End If
+            origPos = Me.Left
+            If ImNetworked() Then
+                sendSync("RR|HKLM#Software\asGatekeeper#CachedAdmins|REG_SZ")
+                domainAdmins = String.Copy(communication)
+                Me.BallStatus.Image = My.Resources.greenball1
+                copyMOTD()
+                If ImMobile() Then
+                    writeStatus("Mobile Device")
+                    Me.Left = Me.Left - lc.Width / 2
+                    lc.StartPosition = Windows.Forms.FormStartPosition.Manual
+                    lc.Top = Me.Top
+                    lc.Left = Me.Left + Me.Size.Width
+                    lc.Height = Me.Height
+                    lc.setDefault(My.Settings.DefaultLocation)
+                    lc.SetButton.Visible = False
+                    lc.Show()
+                End If
+                If ImPrivileged() Then
+                    Dim title As String = Me.Text
+                    If privNeeded() Then
+                        Me.Text = title & " Privileged User (Processing)"
+                        Me.Refresh()
+                        writeStatus("Turn off GPO Refresh")
+                        sendSync("RA|HKLM#SOFTWARE\Policies\Microsoft\Windows\Group Policy\{35378EAC-683F-11D2-A89A-00C04FBBCFA2}#NoBackgroundPolicy|0x00000001|REG_DWORD^", 5000)
+                        sendSync("RA|HKLM#SOFTWARE\Policies\Microsoft\Windows\Group Policy\{35378EAC-683F-11D2-A89A-00C04FBBCFA2}#NoGPOListChanges|0x00000001|REG_DWORD^", 5000)
+                        sendSync("RA|HKCU#" & sid & "\Software\ashby school#privuser|0x00000001|REG_DWORD^")
+                        SetPrivs()
+                    End If
+
+                    Me.Text = title & " Privileged User"
+                Else
+                    lockDesktop()
+                    writeStatus("Turn on GPO Refresh")
+                    sendSync("RA|HKLM#SOFTWARE\Policies\Microsoft\Windows\Group Policy\{35378EAC-683F-11D2-A89A-00C04FBBCFA2}#NoBackgroundPolicy|0x00000000|REG_DWORD^", 5000)
+                    sendSync("RR|HKCU#" & sid & "\Software\ashby school#privuser|REG_DWORD^")
+                    If communication.Contains("1") Then
+                        writeStatus("Refresh Policy")
+                        sendSync("RA|HKCU#" & sid & "\Software\ashby school#privuser|0x00000000|REG_DWORD^")
+                        sendSync("GPUPDATE^", 60000)
+                    End If
+
+                End If
+                sendSync("RA|HKCU#" & sid & "\Software\Microsoft\Windows\CurrentVersion\Explorer\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}#|Computer|REG_SZ^")
+                writeStatus("Ready")
+            Else
+                Me.BallStatus.Image = My.Resources.redball1
+                writeStatus("No Network Detected")
+            End If
+        End If
+        If Not timedOut And connected Then
+            displayMOTD()
+            writeStatus(Environment.UserDomainName & " ready.")
+
+        Else
+            writeStatus("Timeout while talking to service")
+            Login.Enabled = False
+            Me.BallStatus.Image = My.Resources.redball1
+        End If
+
+
+        waitforlogin()
+
+    End Sub
+
+
+    Private Sub waitforlogin()
+        While Not loginFlag
+            Application.DoEvents()
+            Threading.Thread.Sleep(250)
+        End While
+        lc.deleteAllRemotePrinters()
+        If ImMobile() And ImNetworked() Then
+            lc.sendPrintersRoutine()
+        End If
+        lc.Hide()
+        Me.Left = origPos
+        doLogin()
+    End Sub
+
+    Private Sub Logout_Click(sender As System.Object, e As System.EventArgs) Handles Logout.Click
+        If Not connected Then
+
+        End If
+        Utils.logout()
+    End Sub
+
+    Private Sub Login_Click(sender As System.Object, e As System.EventArgs) Handles Login.Click
+        Login.Enabled = False
+        Logout.Enabled = False
+        Me.Text = "Login Processing.... Please Wait"
+        loginFlag = True
+    End Sub
+
+    Private Sub doLogin()
+        doMapPrinters()
+        sendSync(My.Resources.Resources.ExplorerLocation, 5000)
+        For l As Integer = 4 To 1 Step -1
+            Me.Text = "Login in " & l
+            Application.DoEvents()
+            Threading.Thread.Sleep(250)
+        Next
+        doFade()
+        Me.Visible = False
+        'start shell
+        Process.Start("C:\windows\explorer.exe")
+        'make sure shell has enough time to start
+        Application.DoEvents()
+        Threading.Thread.Sleep(5000)
+
+        sendSync(My.Resources.Resources.ExplorerCommand, 5000)
+        Try
+            Application.Exit()
+        Catch ex As Exception
+
+        End Try
+
+    End Sub
+
+    Private Sub doFade()
+        'Dim iCount As Integer    
+
+        ' For iCount = 90 To 10 Step -10
+        '     Me.Opacity = iCount / 100
+        '     Me.Refresh()
+        '     Threading.Thread.Sleep(50)
+        ' Next    
+        Me.Opacity = 0
+    End Sub
+
+    ''' <summary>
+    ''' Gets and maps the printerlist assigned to this station in the host.xml file
+    ''' </summary>
+    ''' <remarks></remarks>
+    Private Sub doMapPrinters()
+        If ImNetworked() Then
+            writeStatus("Getting Printers")
+            sendSync("GETPRINTERS|" & My.Computer.Name & "^", 5000)
+            If communication.Equals("NOPRINTERS") Then
+                Return
+            End If
+
+            Dim plist As String() = communication.Trim(",").Split(",")
+            If plist.Count < 1 Then
+                Return
+            End If
+
+            writeStatus("Mapping " & plist.Count & " Printers")
+            For Each printer In plist
+                If (printer.StartsWith("\\") Or printer.StartsWith("=")) Then
+                    lc.addPrinter(printer)
+                End If
+            Next
+            writeStatus("Setting default printer")
+            lc.setTheDefaultPrinter()
+            writeStatus("Done with printers")
+        End If
+    End Sub
+
+    Private Sub displayMOTD()
+        Try
+            AUPBox.LoadFile(GetFolderPath(SpecialFolder.ApplicationData) & "\Ashby School\" & My.Resources.LocalMOTD)
+        Catch ex As Exception
+            AUPBox.Text = "Ashby School...." & vbCrLf
+            Try
+                FileCopy(My.Resources.RemoteMOTD, GetFolderPath(SpecialFolder.ApplicationData) & "\Ashby School\" & My.Resources.LocalMOTD)
+            Catch exc As Exception
+                StatusBox.Text = "Failed to copy MOTD"
+            End Try
+        End Try
+        Refresh()
+    End Sub
+
+    Private Sub copyMOTD()
+        Try
+            If Not System.IO.Directory.Exists(GetFolderPath(SpecialFolder.ApplicationData) & "\Ashby School") Then
+                System.IO.Directory.CreateDirectory(GetFolderPath(SpecialFolder.ApplicationData) & "\Ashby School")
+                writeStatus("Creating MOTD")
+                Try
+                    FileCopy(My.Resources.RemoteMOTD, GetFolderPath(SpecialFolder.ApplicationData) & "\Ashby School\" & My.Resources.LocalMOTD)
+                Catch ex As Exception
+                    StatusBox.Text = "Failed to copy MOTD"
+                End Try
+            End If
+
+            Dim remoteDate As Date
+            Dim localDate As Date
+
+            remoteDate = FileDateTime(My.Resources.RemoteMOTD)
+            localDate = FileDateTime(GetFolderPath(SpecialFolder.ApplicationData) & "\Ashby School\" & My.Resources.LocalMOTD)
+            If remoteDate > localDate Then
+                Try
+                    writeStatus("Copying newer MOTD")
+                    FileCopy(My.Resources.RemoteMOTD, GetFolderPath(SpecialFolder.ApplicationData) & "\Ashby School\" & My.Resources.LocalMOTD)
+                Catch ex As Exception
+                    StatusBox.Text = "Failed to copy MOTD"
+                End Try
+            End If
+        Catch ex As Exception
+
+        End Try
+        HideFile(GetFolderPath(SpecialFolder.ApplicationData) & "\Ashby School\" & My.Resources.LocalMOTD)
+    End Sub
+
+    Private Sub HideFile(ByVal strFilePath As String)
+
+        Try
+            Dim strFInfo As New FileInfo(strFilePath)
+            strFInfo.Attributes = FileAttributes.Hidden
+
+        Catch ex As Exception
+
+        End Try
+
+
+    End Sub
+
+
+    Private Sub writeStatus(ByVal thing As String)
+        StatusBox.Text = thing
+        Refresh()
+    End Sub
+
+    Private Sub lockDesktop()
+
+        If Not ImDomainAdmin() Then
+            writeStatus("Locking Desktop")
+            sendSync("RA|HKCU#" & sid & "\Software\microsoft\windows\currentversion\explorer\user shell folders#Desktop|%systemdrive%\users\Shared Desktop|REG_SZ^", 5000)
+        Else
+            writeStatus("Domain Admin")
+            sendSync("RA|HKCU#" & sid & "\Software\microsoft\windows\currentversion\explorer\user shell folders#Desktop|%userprofile%\Desktop|REG_SZ^", 5000)
+        End If
+    End Sub
+
+    Private Sub SetPrivs()
+        writeStatus("Setting Privilege for " & sid)
+        sendSync("RA|HKCU#" & sid & "\Software\microsoft\windows\currentversion\explorer\user shell folders#Desktop|%userprofile%\Desktop|REG_SZ^", 5000)
+        sendSync("SETPRIV|" & My.Computer.Name & "|" & userName & "|" & sid & "^", 180000)
+        Dim [date] As String = getDate(getPrivFile)
+        sendSync("RA|HKCU#" & sid & "\software\ashby School#privdate|" & [date] & "|REG_SZ^")
+    End Sub
+
+    ''' <summary>
+    ''' get and map the printers chosen via LocationChooser (in addition to the stations own, processed elsewhere)
+    ''' </summary>
+    ''' <param name="plist"></param>
+    ''' <param name="loc"></param>
+    ''' <remarks>see doMapPrinter</remarks>
+    ''' 
+    Private Sub HandleLocationChooser(plist As List(Of String), ByVal loc As String) Handles lc.sendPrinters
+        My.Settings.DefaultLocation = loc
+        My.Settings.Save()
+        writeStatus("Mapping printers from Location Chooser")
+        For Each printer In plist
+            lc.addPrinter(printer)
+        Next
+        lc.setLocalDefault()
+    End Sub
+
+#Region "Am I"
+
+    Private Function ImDomainAdmin() As Boolean
+
+        Dim adminList As String() = domainAdmins.Split(",")
+        For Each item As String In adminList
+            Utils.WriteToEventLog("Domain Admin Check - " & item & " = " & Me.userName, EventLogEntryType.Information)
+            If item.ToLower.Equals(Me.userName.ToLower) Then
+                Utils.WriteToEventLog("Matched", EventLogEntryType.Information)
+                Return True
+            End If
+        Next
+        Utils.WriteToEventLog("Not Matched", EventLogEntryType.Information)
+        Return False
+    End Function
+
+    Private Function ImNetworked() As Boolean
+        writeStatus("Checking Network")
+        If networkStatus = state.NotChecked Then
+            sendSync("NETSTAT^", 5000)
+            If communication.Equals("standalone") Then
+                writeStatus("Checking Network = Standalone")
+                networkStatus = state.NotConnected
+                Return False
+            Else
+                networkStatus = state.Connected
+                writeStatus("Checking Network = Networked")
+                Return True
+            End If
+        ElseIf networkStatus = state.Connected Then
+            writeStatus("Checking Network = Networked")
+            Return True
+        Else
+            writeStatus("Checking Network = Standalone")
+            Return False
+        End If
+
+    End Function
+
+    Private Function ImMobile() As Boolean
+        writeStatus("Checking for device type")
+        If deviceState = state.NotChecked Then
+            sendSync(My.Resources.Resources.DeviceType, 5000)
+            If communication.ToLower.Equals("mobile") Then
+                deviceState = state.Connected
+                writeStatus("Checking for device type = Mobile")
+                Return True
+            End If
+            deviceState = state.NotConnected
+            writeStatus("Checking for device type = Static")
+            Return False
+        End If
+        If deviceState = state.Connected Then
+            Return True
+        Else
+            Return False
+        End If
+
+    End Function
+
+    Private Function ImPrivileged() As Boolean
+        writeStatus("Checking for privileged user")
+        sendSync("GETPRIV|" & My.Computer.Name & "|" & userName & "^")
+        If communication.Equals("Privileged") Then
+            StatusBox.Text = "Checking for privileged user = true"
+            Refresh()
+            Return True
+        Else
+            writeStatus("Checking for privileged user = false")
+            Return False
+        End If
+    End Function
+
+    Private Function privNeeded() As Boolean
+        Return True
+        'try
+        'sendSync("RR|HKLM#SOFTWARE\Policies\Microsoft\Windows\Group Policy\{35378EAC-683F-11D2-A89A-00C04FBBCFA2}#NoBackgroundPolicy|REG_DWORD^")
+        'If communication.Contains("1") Then
+        '    Utils.WriteToEventLog("Already a priv user",EventLogEntryType.SuccessAudit)
+        '    sendSync("RR|HKCU#" & sid & "\SOFTWARE\Ashby School#privdate|REG_SZ^")
+        '    Utils.WriteToEventLog("REG Date = " & communication,EventLogEntryType.SuccessAudit)
+        '    Dim [date] as String = communication
+        '    Dim fileDate As String = getDate(getPrivFile)
+        '    Utils.WriteToEventLog("File Date = " & fileDate,EventLogEntryType.SuccessAudit)
+        '    If [date].Equals(fileDate) Then
+        '        Utils.WriteToEventLog("Already Priv",EventLogEntryType.SuccessAudit)
+        '        writeStatus("Privileges already set")
+        '        Return False
+        '    End If
+        '    Utils.WriteToEventLog(fileDate & " /= " & [Date],EventLogEntryType.FailureAudit)
+        'End if
+        'Return True
+        'Catch ex As Exception
+        '    Utils.WriteToEventLog("privNeeded - " & ex.Message,EventLogEntryType.Error)
+        '    Return True
+        'End Try
+
+    End Function
+
+#End Region
+
+    Private Function getDate(ByVal filename As String) As String
+        Return (System.IO.File.GetLastWriteTime(filename).ToLongTimeString)
+    End Function
+
+    Private Function getPrivFile() As String
+        ' work out if we need to process a priv file on this machine
+        Dim thePath As String = System.Reflection.Assembly.GetExecutingAssembly.Location()
+        Dim pos As Integer = thePath.LastIndexOf("\")
+        thePath = thePath.Substring(0, pos)
+        Return thePath & "\privfile.ini"
+    End Function
+
+#Region "Networking"
+    ''' <summary>
+    ''' Sends text to the middleman service, with a default timeout of 5 seconds
+    ''' </summary>
+    ''' <param name="line">Text to send to middleman</param>
+    ''' <remarks></remarks>
+    Private Sub sendSync(ByVal line As String)
+        sendSync(line, 5000)
+    End Sub
+
+    ''' <summary>
+    ''' Sends text to the middleman service
+    ''' </summary>
+    ''' <param name="line">Text to send to middleman</param>
+    ''' <param name="_timeout">Timeout in miliseconds to wait for a response</param>
+    ''' <remarks></remarks>
+    Private Sub sendSync(ByVal line As String, _timeout As Integer)
+        If Not line.EndsWith("^") Then
+            line = line & "^"
+        End If
+        Timeout.Interval = _timeout
+
+        Timeout.Enabled = True
+        Timeout.Start()
+        ClientSocket1.Send(line)
+        While waiting
+            Application.DoEvents()
+            Threading.Thread.Sleep(500)
+        End While
+        Timeout.Stop()
+        Timeout.Enabled = False
+        waiting = True
+        If timedOut Then
+            writeStatus("Timeout")
+            Utils.WriteToEventLog("Timeout while waiting on " & line, EventLogEntryType.Error)
+            Me.BackColor = Color.BlueViolet
+        End If
+    End Sub
+
+    Private Sub Timeout_Tick(sender As System.Object, e As System.EventArgs) Handles Timeout.Tick
+        waiting = False
+        timedOut = True
+    End Sub
+
+    Private Sub getSync(ByVal receivedData As String) Handles ClientSocket1.Receive
+        communication = receivedData
+        waiting = False
+    End Sub
+#End Region
+
+    Public Sub backdoorLogin()
+        Dim bd As New backdoor(Me)
+        bd.Visible = True
+    End Sub
+
+    Public Sub doBackdoor()
+        MsgBox("Time to login...", MsgBoxStyle.OkOnly)
+    End Sub
+
+    Private Sub BallStatus_DoubleClick(sender As System.Object, e As System.EventArgs) Handles BallStatus.DoubleClick
+        backdoorBall = True
+    End Sub
+
+    Private Sub ToolStripStatusLabel2_DoubleClick(sender As System.Object, e As System.EventArgs) Handles ToolStripStatusLabel2.DoubleClick
+        If backdoorBall = True Then
+            backdoorLogin()
+        End If
+    End Sub
+
+End Class

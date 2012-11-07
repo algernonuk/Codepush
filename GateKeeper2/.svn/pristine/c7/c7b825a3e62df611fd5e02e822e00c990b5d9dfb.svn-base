@@ -1,0 +1,3 @@
+﻿V1.0.0.1 - Finally added change tracking.
+V1.0.0.1 - Added check for non-existing wallpaper.  Will now select a default wallpaper if the login wallpaper doesn't exists.   (10/7/12)
+V1.0.0.2 - Move window back after LC closes. 
